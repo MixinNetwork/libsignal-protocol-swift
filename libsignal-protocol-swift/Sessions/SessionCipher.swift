@@ -108,10 +108,10 @@ public final class SessionCipher {
      - returns: The decrypted data
      - throws: Errors of type `SignalError`
      */
-    public func decrypt(message: CiphertextMessage) throws -> Data {
+    public func decrypt(message: CiphertextMessage, callback: DecryptionCallback? = nil) throws -> Data {
         switch message.type {
-        case .preKey: return try decrypt(preKeySignalMessage: message.message)
-        case .signal: return try decrypt(signalMessage: message.message)
+        case .preKey: return try decrypt(preKeySignalMessage: message.message, callback: callback)
+        case .signal: return try decrypt(signalMessage: message.message, callback: callback)
         default: throw SignalError.invalidArgument
         }
     }
@@ -130,7 +130,7 @@ public final class SessionCipher {
      - returns: The decrypted data
      - throws: Errors of type `SignalError`
      */
-    public func decrypt(preKeySignalMessage message: Data) throws -> Data {
+    public func decrypt(preKeySignalMessage message: Data, callback: DecryptionCallback?) throws -> Data {
         let cipher = try self.cipher()
         defer { session_cipher_free(cipher) }
 
@@ -143,9 +143,22 @@ public final class SessionCipher {
         guard result == 0 else { throw SignalError(value: result) }
         defer { pre_key_signal_message_destroy(messagePtr) }
 
+        if let callback = callback {
+            self.decryptionCallback = callback
+            setSessionDecryptionCallback(cipher: cipher) { (cipher, plain, decryptContext) -> Int32 in
+                if let decryptContext = decryptContext, let plain = plain {
+                    let sessionCipher = Unmanaged<SessionCipher>.fromOpaque(decryptContext).takeUnretainedValue()
+                    sessionCipher.decryptionCallback!(Data(signalBuffer: plain))
+                    return 1
+                }
+                return 0
+            }
+        }
+
         var plaintextPtr: OpaquePointer? = nil
+        let rawSelf = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         result = withUnsafeMutablePointer(to: &plaintextPtr) {
-            session_cipher_decrypt_pre_key_signal_message(cipher, messagePtr, nil, $0)
+            session_cipher_decrypt_pre_key_signal_message(cipher, messagePtr, rawSelf, $0)
         }
         guard result == SG_SUCCESS else { throw SignalError(value: result) }
         defer { signal_buffer_free(plaintextPtr) }
@@ -164,7 +177,7 @@ public final class SessionCipher {
      - parameter message: The signal message to decrypt.
      - returns: The result of the operation, and the decrypted data on sucess.
      */
-    public func decrypt(signalMessage message: Data) throws -> Data {
+    public func decrypt(signalMessage message: Data, callback: DecryptionCallback?) throws -> Data {
         let cipher = try self.cipher()
         defer { session_cipher_free(cipher) }
 
@@ -177,13 +190,32 @@ public final class SessionCipher {
         guard result == 0 else { throw SignalError(value: result) }
         defer { signal_message_destroy(messagePtr) }
 
+        if let callback = callback {
+            self.decryptionCallback = callback
+            setSessionDecryptionCallback(cipher: cipher) { (cipher, plain, decryptContext) -> Int32 in
+                if let decryptContext = decryptContext, let plain = plain {
+                    let sessionCipher = Unmanaged<SessionCipher>.fromOpaque(decryptContext).takeUnretainedValue()
+                    sessionCipher.decryptionCallback!(Data(signalBuffer: plain))
+                    return 1
+                }
+                return 0
+            }
+        }
+
         var plaintextPtr: OpaquePointer? = nil
+        let rawSelf = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         result = withUnsafeMutablePointer(to: &plaintextPtr) {
-            session_cipher_decrypt_signal_message(cipher, messagePtr, nil, $0)
+            session_cipher_decrypt_signal_message(cipher, messagePtr, rawSelf, $0)
         }
         guard result == SG_SUCCESS else { throw SignalError(value: result) }
         defer { signal_buffer_free(plaintextPtr) }
 
         return Data(signalBuffer: plaintextPtr!)
     }
+
+    private func setSessionDecryptionCallback(cipher: OpaquePointer, cb: @escaping (@convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutableRawPointer?) -> Int32)) {
+        session_cipher_set_decryption_callback(cipher, cb)
+    }
+
+    private var decryptionCallback: DecryptionCallback? = nil
 }

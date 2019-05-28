@@ -119,4 +119,33 @@ public final class GroupSessionBuilder {
         let mess = Data(signalBuffer: serialized)
         return CiphertextMessage(type: .distribution, message: mess)
     }
+
+    public func getDistributionMessage(for localAddress: SignalSenderKeyName) throws -> CiphertextMessage {
+
+        // Create group builder
+        var builder: OpaquePointer? = nil
+        var result = withUnsafeMutablePointer(to: &builder) {
+            group_session_builder_create($0, store.storeContext, Signal.context)
+        }
+        guard result == 0 else { throw SignalError(value: result) }
+        defer { group_session_builder_free(builder) }
+
+        // get message
+        var message: OpaquePointer? = nil
+        result = withUnsafeMutablePointer(to: &message) {
+            get_sender_key_distribution_message(builder, $0, localAddress.pointer)
+        }
+        guard result == 0 else { throw SignalError(value: result) }
+        defer { sender_key_distribution_message_destroy(message) }
+
+        // Serialize message
+        guard let serialized = ciphertext_message_get_serialized(message) else {
+            throw SignalError.unknownError
+        }
+
+
+        // Convert to data
+        let mess = Data(signalBuffer: serialized)
+        return CiphertextMessage(type: .distribution, message: mess)
+    }
 }

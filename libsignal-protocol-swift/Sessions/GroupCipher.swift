@@ -87,11 +87,11 @@ public final class GroupCipher {
      - returns: The decrypted message data
      - throws: Errors of type `SignalError`
      */
-    public func decrypt(_ message: CiphertextMessage) throws -> Data {
+    public func decrypt(_ message: CiphertextMessage, callback: DecryptionCallback? = nil) throws -> Data {
         guard message.type == .senderKey else {
             throw SignalError.invalidArgument
         }
-        return try decrypt(message.message)
+        return try decrypt(message.message, callback: callback)
     }
 
     /**
@@ -107,7 +107,7 @@ public final class GroupCipher {
      - returns: The decrypted message on success
      - throws: Errors of type `SignalError`
      */
-    public func decrypt(_ message: Data) throws -> Data {
+    public func decrypt(_ message: Data, callback: DecryptionCallback?) throws -> Data {
 
         // Create the cipher
         var cipher: OpaquePointer? = nil
@@ -127,14 +127,33 @@ public final class GroupCipher {
         guard result == 0 else { throw SignalError(value: result) }
         defer { sender_key_message_destroy(senderKeyMessage) }
 
+        if let callback = callback {
+            self.decryptionCallback = callback
+            setGroupDecryptionCallback(cipher: cipher!) { (groupCipher, plain, decryptContext) -> Int32 in
+                if let decryptContext = decryptContext, let plain = plain {
+                    let groupCipher = Unmanaged<GroupCipher>.fromOpaque(decryptContext).takeUnretainedValue()
+                    groupCipher.decryptionCallback!(Data(signalBuffer: plain))
+                    return 1
+                }
+                return 0
+            }
+        }
+
         // Decrypt message
         var plaintext: OpaquePointer? = nil
+        let rawSelf = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         result = withUnsafeMutablePointer(to: &plaintext) {
-            group_cipher_decrypt(cipher, senderKeyMessage, nil, $0)
+            group_cipher_decrypt(cipher, senderKeyMessage, rawSelf, $0)
         }
         guard result == 0 else { throw SignalError(value: result) }
         defer { signal_buffer_free(plaintext) }
 
         return Data(signalBuffer: plaintext!)
     }
+
+    private func setGroupDecryptionCallback(cipher: OpaquePointer, cb: @escaping (@convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutableRawPointer?) -> Int32)) {
+        group_cipher_set_decryption_callback(cipher, cb)
+    }
+
+    private var decryptionCallback: DecryptionCallback? = nil
 }

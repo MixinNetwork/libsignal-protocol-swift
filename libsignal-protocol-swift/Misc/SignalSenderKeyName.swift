@@ -37,8 +37,8 @@ public final class SignalSenderKeyName {
         self.groupId = groupId
         self.sender = sender
         let count = groupId.utf8.count
-        self.groupPointer = UnsafeMutablePointer<Int8>.allocate(capacity: count)
-        groupPointer.assign(from: groupId, count: count)
+        self.groupPointer = UnsafeMutablePointer<Int8>(mutating: (groupId as NSString).utf8String!)
+        // groupPointer.assign(from: groupId, count: count)
         self.address = UnsafeMutablePointer<signal_protocol_sender_key_name>.allocate(capacity: 1)
 
         address.pointee = signal_protocol_sender_key_name(group_id: groupPointer, group_id_len: count, sender: sender.signalAddress.pointee)
@@ -66,6 +66,13 @@ public final class SignalSenderKeyName {
             return nil
         }
         self.init(groupId: String(cString: groupPtr), sender: sender)
+    }
+
+    deinit {
+        // groupPointer.deallocate(capacity: groupId.utf8.count)
+        // TODO
+        // signalAddress.deallocate()
+        address.deallocate(capacity: 1)
     }
 }
 
